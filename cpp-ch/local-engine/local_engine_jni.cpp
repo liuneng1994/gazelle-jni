@@ -212,7 +212,9 @@ JNIEXPORT jlong Java_io_glutenproject_vectorized_ExpressionEvaluatorJniWrapper_n
     std::string plan_string;
     plan_string.assign(reinterpret_cast<const char *>(plan_address), plan_size);
     auto query_plan = parser.parse(plan_string);
-    local_engine::LocalExecutor * executor = new local_engine::LocalExecutor(parser.query_context);
+    local_engine::LocalExecutor * executor = new local_engine::LocalExecutor(parser.query_context, query_context);
+    executor->setMetric(parser.getMetric());
+    executor->setExtraPlanHolder(parser.extra_plan_holder);
     executor->execute(std::move(query_plan));
     env->ReleaseByteArrayElements(plan, plan_address, JNI_ABORT);
     return reinterpret_cast<jlong>(executor);
@@ -280,6 +282,7 @@ JNIEXPORT void Java_io_glutenproject_vectorized_BatchIterator_nativeClose(JNIEnv
 {
     LOCAL_ENGINE_JNI_METHOD_START
     local_engine::LocalExecutor * executor = reinterpret_cast<local_engine::LocalExecutor *>(executor_address);
+    LOG_ERROR(&Poco::Logger::get("jni"), "{}",local_engine::RelMetricSerializer::serializeRelMetric(executor->getMetric()));
     delete executor;
     LOCAL_ENGINE_JNI_METHOD_END(env, )
 }
@@ -966,7 +969,7 @@ Java_io_glutenproject_vectorized_SimpleExpressionEval_createNativeInstance(JNIEn
     std::string plan_string;
     plan_string.assign(reinterpret_cast<const char *>(plan_address), plan_size);
     auto query_plan = parser.parse(plan_string);
-    local_engine::LocalExecutor * executor = new local_engine::LocalExecutor(parser.query_context);
+    local_engine::LocalExecutor * executor = new local_engine::LocalExecutor(parser.query_context, context);
     executor->execute(std::move(query_plan));
     env->ReleaseByteArrayElements(plan, plan_address, JNI_ABORT);
     return reinterpret_cast<jlong>(executor);

@@ -77,6 +77,32 @@
 #include <Common/logger_useful.h>
 #include <Common/typeid_cast.h>
 
+#include <Core/ColumnWithTypeAndName.h>
+#include <Core/Types.h>
+#include <DataTypes/DataTypeFactory.h>
+#include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/IDataType.h>
+#include <DataTypes/Serializations/ISerialization.h>
+#include <Functions/CastOverloadResolver.h>
+#include <Functions/FunctionsConversion.h>
+#include <Parser/RelParser.h>
+#include <Parsers/ExpressionListParsers.h>
+#include <Processors/QueryPlan/QueryPlan.h>
+#include <Processors/QueryPlan/SortingStep.h>
+#include <Storages/IStorage.h>
+#include <base/types.h>
+#include <sys/select.h>
+#include <Common/CHUtil.h>
+#include <Core/Types.h>
+#include <Core/ColumnWithTypeAndName.h>
+#include <Functions/FunctionsConversion.h>
+#include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/IDataType.h>
+#include <Parsers/ExpressionListParsers.h>
+#include <Interpreters/QueryPriorities.h>
+#include <Interpreters/ProcessList.h>
+#include "SerializedPlanParser.h"
+
 namespace DB
 {
 namespace ErrorCodes
@@ -241,7 +267,7 @@ bool SerializedPlanParser::isReadRelFromJava(const substrait::ReadRel & rel)
     return rel.local_files().items().size() == 1 && rel.local_files().items().at(0).uri_file().starts_with("iterator");
 }
 
-QueryPlanPtr SerializedPlanParser::parseReadRealWithLocalFile(const substrait::ReadRel & rel)
+QueryPlanStepPtr SerializedPlanParser::parseReadRealWithLocalFile(const substrait::ReadRel & rel)
 {
     assert(rel.has_local_files());
     assert(rel.has_base_schema());
@@ -250,12 +276,10 @@ QueryPlanPtr SerializedPlanParser::parseReadRealWithLocalFile(const substrait::R
     auto source_pipe = Pipe(source);
     auto source_step = std::make_unique<ReadFromStorageStep>(std::move(source_pipe), "substrait local files", nullptr);
     source_step->setStepDescription("read local files");
-    auto query_plan = std::make_unique<QueryPlan>();
-    query_plan->addStep(std::move(source_step));
-    return query_plan;
+    return source_step;
 }
 
-QueryPlanPtr SerializedPlanParser::parseReadRealWithJavaIter(const substrait::ReadRel & rel)
+QueryPlanStepPtr SerializedPlanParser::parseReadRealWithJavaIter(const substrait::ReadRel & rel)
 {
     assert(rel.has_local_files());
     assert(rel.local_files().items().size() == 1);
@@ -263,17 +287,14 @@ QueryPlanPtr SerializedPlanParser::parseReadRealWithJavaIter(const substrait::Re
     auto iter = rel.local_files().items().at(0).uri_file();
     auto pos = iter.find(':');
     auto iter_index = std::stoi(iter.substr(pos + 1, iter.size()));
-    auto plan = std::make_unique<QueryPlan>();
 
     auto source = std::make_shared<SourceFromJavaIter>(parseNameStruct(rel.base_schema()), input_iters[iter_index]);
     QueryPlanStepPtr source_step = std::make_unique<ReadFromPreparedSource>(Pipe(source));
     source_step->setStepDescription("Read From Java Iter");
-    plan->addStep(std::move(source_step));
-
-    return plan;
+    return source_step;
 }
 
-void SerializedPlanParser::addRemoveNullableStep(QueryPlan & plan, std::vector<String> columns)
+IQueryPlanStep * SerializedPlanParser::addRemoveNullableStep(QueryPlan & plan, std::vector<String> columns)
 {
     if (columns.empty())
         return;
@@ -281,10 +302,12 @@ void SerializedPlanParser::addRemoveNullableStep(QueryPlan & plan, std::vector<S
     removeNullable(columns, remove_nullable_actions_dag);
     auto expression_step = std::make_unique<ExpressionStep>(plan.getCurrentDataStream(), remove_nullable_actions_dag);
     expression_step->setStepDescription("Remove nullable properties");
+    auto * step_ptr = expression_step.get();
     plan.addStep(std::move(expression_step));
+    return step_ptr;
 }
 
-QueryPlanPtr SerializedPlanParser::parseMergeTreeTable(const substrait::ReadRel & rel)
+DB::QueryPlanPtr SerializedPlanParser::parseMergeTreeTable(const substrait::ReadRel & rel, std::vector<IQueryPlanStep *>& steps)
 {
     assert(rel.has_extension_table());
     google::protobuf::StringValue table;
@@ -355,12 +378,14 @@ QueryPlanPtr SerializedPlanParser::parseMergeTreeTable(const substrait::ReadRel 
     auto read_step = query_context.custom_storage_merge_tree->reader.readFromParts(
         selected_parts, names_and_types_list.getNames(), query_context.storage_snapshot, *query_info, context, 4096 * 2, 1);
     QueryPlanPtr query = std::make_unique<QueryPlan>();
+    steps.emplace_back(read_step.get());
     query->addStep(std::move(read_step));
     if (!not_null_columns.empty())
     {
         auto input_header = query->getCurrentDataStream().header;
         std::erase_if(not_null_columns, [input_header](auto item) -> bool { return !input_header.has(item); });
-        addRemoveNullableStep(*query, not_null_columns);
+        auto* remove_null_step = addRemoveNullableStep(*query, not_null_columns);
+        steps.emplace_back(remove_null_step);
     }
     return query;
 }
@@ -653,6 +678,7 @@ QueryPlanPtr SerializedPlanParser::parse(std::unique_ptr<substrait::Plan> plan)
 QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list<const substrait::Rel *> & rel_stack)
 {
     QueryPlanPtr query_plan;
+    std::vector<IQueryPlanStep *> steps;
     switch (rel.rel_type_case())
     {
         case substrait::Rel::RelTypeCase::kFetch: {
@@ -661,6 +687,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             query_plan = parseOp(limit.input(), rel_stack);
             rel_stack.pop_back();
             auto limit_step = std::make_unique<LimitStep>(query_plan->getCurrentDataStream(), limit.count(), limit.offset());
+            steps.emplace_back(limit_step.get());
             query_plan->addStep(std::move(limit_step));
             break;
         }
@@ -690,10 +717,11 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             input_with_condition.emplace_back(filter_name);
             actions_dag->removeUnusedActions(input_with_condition);
             auto filter_step = std::make_unique<FilterStep>(query_plan->getCurrentDataStream(), actions_dag, filter_name, true);
+            steps.emplace_back(filter_step.get());
             query_plan->addStep(std::move(filter_step));
-
             // remove nullable
-            addRemoveNullableStep(*query_plan, required_columns);
+            auto * remove_null_step = addRemoveNullableStep(*query_plan, required_columns);
+            steps.emplace_back(remove_null_step);
             break;
         }
         case substrait::Rel::RelTypeCase::kGenerate:
@@ -737,6 +765,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             auto actions_dag = expressionsToActionsDAG(expressions, query_plan->getCurrentDataStream().header, read_schema);
             auto expression_step = std::make_unique<ExpressionStep>(query_plan->getCurrentDataStream(), actions_dag);
             expression_step->setStepDescription(is_generate ? "Generate" : "Project");
+            steps.emplace_back(expression_step.get());
             query_plan->addStep(std::move(expression_step));
             break;
         }
@@ -748,7 +777,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
 
             bool is_final;
             auto aggregate_step = parseAggregate(*query_plan, aggregate, is_final);
-
+            steps.emplace_back(aggregate_step.get());
             query_plan->addStep(std::move(aggregate_step));
 
             if (is_final)
@@ -786,6 +815,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
                         QueryPlanStepPtr convert_step
                             = std::make_unique<ExpressionStep>(query_plan->getCurrentDataStream(), convert_action);
                         convert_step->setStepDescription("Convert Aggregate Output");
+                        steps.emplace_back(convert_step.get());
                         query_plan->addStep(std::move(convert_step));
                     }
                 }
@@ -797,18 +827,22 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             assert(read.has_local_files() || read.has_extension_table() && "Only support local parquet files or merge tree read rel");
             if (read.has_local_files())
             {
+                query_plan = std::make_unique<QueryPlan>();
+                QueryPlanStepPtr step;
                 if (isReadRelFromJava(read))
                 {
-                    query_plan = parseReadRealWithJavaIter(read);
+                    step = parseReadRealWithJavaIter(read);
                 }
                 else
                 {
-                    query_plan = parseReadRealWithLocalFile(read);
+                    step = parseReadRealWithLocalFile(read);
                 }
+                steps.emplace_back(step.get());
+                query_plan->addStep(std::move(step));
             }
             else
             {
-                query_plan = parseMergeTreeTable(read);
+                query_plan = parseMergeTreeTable(read, steps);
             }
             last_project = nullptr;
             break;
@@ -826,7 +860,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             auto right_plan = parseOp(join.right(), rel_stack);
             rel_stack.pop_back();
 
-            query_plan = parseJoin(join, std::move(left_plan), std::move(right_plan));
+            query_plan = parseJoin(join, std::move(left_plan), std::move(right_plan), steps);
             break;
         }
         case substrait::Rel::RelTypeCase::kSort: {
@@ -836,6 +870,8 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             rel_stack.pop_back();
             auto sort_parser = RelParserFactory::instance().getBuilder(substrait::Rel::RelTypeCase::kSort)(this);
             query_plan = sort_parser->parse(std::move(query_plan), rel, rel_stack);
+            auto parser_steps = sort_parser->getSteps();
+            steps.insert(steps.end(), parser_steps.begin(), parser_steps.end());
             break;
         }
         case substrait::Rel::RelTypeCase::kWindow: {
@@ -845,6 +881,8 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             rel_stack.pop_back();
             auto win_parser = RelParserFactory::instance().getBuilder(substrait::Rel::RelTypeCase::kWindow)(this);
             query_plan = win_parser->parse(std::move(query_plan), rel, rel_stack);
+            auto parser_steps = win_parser->getSteps();
+            steps.insert(steps.end(), parser_steps.begin(), parser_steps.end());
             break;
         }
         case substrait::Rel::RelTypeCase::kExpand: {
@@ -854,10 +892,22 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             rel_stack.pop_back();
             auto expand_parser = RelParserFactory::instance().getBuilder(substrait::Rel::RelTypeCase::kExpand)(this);
             query_plan = expand_parser->parse(std::move(query_plan), rel, rel_stack);
+            auto parser_steps = expand_parser->getSteps();
+            steps.insert(steps.end(), parser_steps.begin(), parser_steps.end());
             break;
         }
         default:
             throw Exception(ErrorCodes::UNKNOWN_TYPE, "doesn't support relation type: {}.\n{}", rel.rel_type_case(), rel.DebugString());
+    }
+
+    if (rel.rel_type_case() == substrait::Rel::RelTypeCase::kRead)
+    {
+        size_t id = metrics.empty() ? 0 : metrics.front()->getId() + 1;
+        metrics.emplace_back(std::make_shared<RelMetric>(id, String(magic_enum::enum_name(rel.rel_type_case())), steps));
+    }
+    else
+    {
+        metrics = {std::make_shared<RelMetric>(String(magic_enum::enum_name(rel.rel_type_case())), metrics, steps)};
     }
     return query_plan;
 }
@@ -2243,7 +2293,7 @@ void SerializedPlanParser::collectJoinKeys(
     }
 }
 
-DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::QueryPlanPtr left, DB::QueryPlanPtr right)
+DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::QueryPlanPtr left, DB::QueryPlanPtr right, std::vector<IQueryPlanStep *>& steps)
 {
     google::protobuf::StringValue optimization;
     optimization.ParseFromString(join.advanced_extension().optimization().value());
@@ -2290,6 +2340,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
         {
             QueryPlanStepPtr project_step = std::make_unique<ExpressionStep>(right->getCurrentDataStream(), project);
             project_step->setStepDescription("Rename Broadcast Table Name");
+            steps.emplace_back(project_step.get());
             right->addStep(std::move(project_step));
         }
     }
@@ -2328,6 +2379,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
         rename_dag->projectInput();
         QueryPlanStepPtr project_step = std::make_unique<ExpressionStep>(right->getCurrentDataStream(), rename_dag);
         project_step->setStepDescription("Right Table Rename");
+        steps.emplace_back(project_step.get());
         right->addStep(std::move(project_step));
     }
 
@@ -2344,6 +2396,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
     {
         auto converting_step = std::make_unique<ExpressionStep>(right->getCurrentDataStream(), right_convert_actions);
         converting_step->setStepDescription("Convert joined columns");
+        steps.emplace_back(converting_step.get());
         right->addStep(std::move(converting_step));
     }
 
@@ -2351,6 +2404,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
     {
         auto converting_step = std::make_unique<ExpressionStep>(left->getCurrentDataStream(), left_convert_actions);
         converting_step->setStepDescription("Convert joined columns");
+        steps.emplace_back(converting_step.get());
         left->addStep(std::move(converting_step));
     }
     QueryPlanPtr query_plan;
@@ -2363,7 +2417,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
     bool add_filter_step = false;
     try
     {
-        parseJoinKeysAndCondition(table_join, join, left, right, table_join->columnsFromJoinedTable(), after_join_names);
+        parseJoinKeysAndCondition(table_join, join, left, right, table_join->columnsFromJoinedTable(), after_join_names, steps);
     }
     // if ch not support the join type or join conditions, it will throw an exception like 'not support'.
     catch (Poco::Exception & e)
@@ -2391,8 +2445,11 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
         QueryPlanStepPtr join_step = std::make_unique<FilledJoinStep>(left->getCurrentDataStream(), hash_join, 8192);
 
         join_step->setStepDescription("JOIN");
+        steps.emplace_back(join_step.get());
         left->addStep(std::move(join_step));
         query_plan = std::move(left);
+        /// hold right plan for profile
+        extra_plan_holder.emplace_back(std::move(right));
     }
     else
     {
@@ -2401,7 +2458,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
             = std::make_unique<DB::JoinStep>(left->getCurrentDataStream(), right->getCurrentDataStream(), hash_join, 8192, 1, false);
 
         join_step->setStepDescription("JOIN");
-
+        steps.emplace_back(join_step.get());
         std::vector<QueryPlanPtr> plans;
         plans.emplace_back(std::move(left));
         plans.emplace_back(std::move(right));
@@ -2419,6 +2476,7 @@ DB::QueryPlanPtr SerializedPlanParser::parseJoin(substrait::JoinRel join, DB::Qu
             = parseFunction(query_plan->getCurrentDataStream().header, join.post_join_filter(), filter_name, useless, nullptr, true);
         auto filter_step = std::make_unique<FilterStep>(query_plan->getCurrentDataStream(), actions_dag, filter_name, true);
         filter_step->setStepDescription("Post Join Filter");
+        steps.emplace_back(filter_step.get());
         query_plan->addStep(std::move(filter_step));
     }
     return query_plan;
@@ -2430,7 +2488,8 @@ void SerializedPlanParser::parseJoinKeysAndCondition(
     DB::QueryPlanPtr & left,
     DB::QueryPlanPtr & right,
     const NamesAndTypesList & alias_right,
-    Names & names)
+    Names & names,
+    std::vector<IQueryPlanStep *>& steps)
 {
     ASTs args;
     ASTParser astParser(context, function_mapping);
@@ -2484,6 +2543,7 @@ void SerializedPlanParser::parseJoinKeysAndCondition(
             auto actions = astParser.convertToActions(left->getCurrentDataStream().header.getNamesAndTypesList(), left_keys);
             QueryPlanStepPtr before_join_step = std::make_unique<ExpressionStep>(left->getCurrentDataStream(), actions);
             before_join_step->setStepDescription("Before JOIN LEFT");
+            steps.emplace_back(before_join_step.get());
             left->addStep(std::move(before_join_step));
         }
 
@@ -2492,6 +2552,7 @@ void SerializedPlanParser::parseJoinKeysAndCondition(
             auto actions = astParser.convertToActions(right->getCurrentDataStream().header.getNamesAndTypesList(), right_keys);
             QueryPlanStepPtr before_join_step = std::make_unique<ExpressionStep>(right->getCurrentDataStream(), actions);
             before_join_step->setStepDescription("Before JOIN RIGHT");
+            steps.emplace_back(before_join_step.get());
             right->addStep(std::move(before_join_step));
         }
     }
@@ -2733,12 +2794,24 @@ void LocalExecutor::execute(QueryPlanPtr query_plan)
     current_query_plan = std::move(query_plan);
     Stopwatch stopwatch;
     stopwatch.start();
-    QueryPlanOptimizationSettings optimization_settings{.optimize_plan = true};
+    QueryPlanOptimizationSettings optimization_settings{.optimize_plan = false};
+    DB::QueryPriorities priorities;
+    String query = "query";
+    auto query_status = std::make_shared<DB::QueryStatus>(context,
+                                                          query,
+                                                          context->getClientInfo(),
+                                                          priorities.insert(static_cast<int>(context->getSettingsRef().priority)),
+                                                          std::move(DB::CurrentThread::getGroup()),
+                                                          DB::IAST::QueryKind::Select,
+                                                          0);
     auto pipeline_builder = current_query_plan->buildQueryPipeline(
         optimization_settings,
         BuildQueryPipelineSettings{
             .actions_settings = ExpressionActionsSettings{
-                .can_compile_expressions = true, .min_count_to_compile_expression = 3, .compile_expressions = CompileExpressions::yes}});
+                .can_compile_expressions = true,
+                .min_count_to_compile_expression = 3,
+                .compile_expressions = CompileExpressions::yes},
+                .process_list_element = query_status});
     query_pipeline = QueryPipelineBuilder::getPipeline(std::move(*pipeline_builder));
     LOG_DEBUG(&Poco::Logger::get("LocalExecutor"), "clickhouse pipeline:{}", QueryPipelineUtil::explainPipeline(query_pipeline));
     auto t_pipeline = stopwatch.elapsedMicroseconds();
@@ -2828,7 +2901,7 @@ Block & LocalExecutor::getHeader()
 {
     return header;
 }
-LocalExecutor::LocalExecutor(QueryContext & _query_context) : query_context(_query_context)
+LocalExecutor::LocalExecutor(QueryContext & _query_context, ContextPtr context_) : query_context(_query_context), context(context_)
 {
 }
 
