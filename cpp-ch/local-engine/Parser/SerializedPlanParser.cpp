@@ -297,8 +297,9 @@ QueryPlanStepPtr SerializedPlanParser::parseReadRealWithJavaIter(const substrait
 IQueryPlanStep * SerializedPlanParser::addRemoveNullableStep(QueryPlan & plan, std::vector<String> columns)
 {
     if (columns.empty())
-        return;
-    auto remove_nullable_actions_dag = std::make_shared<ActionsDAG>(blockToNameAndTypeList(plan.getCurrentDataStream().header));
+        return nullptr;
+    auto remove_nullable_actions_dag
+        = std::make_shared<ActionsDAG>(blockToNameAndTypeList(plan.getCurrentDataStream().header));
     removeNullable(columns, remove_nullable_actions_dag);
     auto expression_step = std::make_unique<ExpressionStep>(plan.getCurrentDataStream(), remove_nullable_actions_dag);
     expression_step->setStepDescription("Remove nullable properties");
@@ -385,7 +386,10 @@ DB::QueryPlanPtr SerializedPlanParser::parseMergeTreeTable(const substrait::Read
         auto input_header = query->getCurrentDataStream().header;
         std::erase_if(not_null_columns, [input_header](auto item) -> bool { return !input_header.has(item); });
         auto* remove_null_step = addRemoveNullableStep(*query, not_null_columns);
-        steps.emplace_back(remove_null_step);
+        if (remove_null_step)
+        {
+            steps.emplace_back(remove_null_step);
+        }
     }
     return query;
 }
@@ -687,6 +691,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             query_plan = parseOp(limit.input(), rel_stack);
             rel_stack.pop_back();
             auto limit_step = std::make_unique<LimitStep>(query_plan->getCurrentDataStream(), limit.count(), limit.offset());
+            limit_step->setStepDescription("LIMIT");
             steps.emplace_back(limit_step.get());
             query_plan->addStep(std::move(limit_step));
             break;
@@ -717,11 +722,15 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
             input_with_condition.emplace_back(filter_name);
             actions_dag->removeUnusedActions(input_with_condition);
             auto filter_step = std::make_unique<FilterStep>(query_plan->getCurrentDataStream(), actions_dag, filter_name, true);
+            filter_step->setStepDescription("WHERE");
             steps.emplace_back(filter_step.get());
             query_plan->addStep(std::move(filter_step));
             // remove nullable
             auto * remove_null_step = addRemoveNullableStep(*query_plan, required_columns);
-            steps.emplace_back(remove_null_step);
+            if (remove_null_step)
+            {
+                steps.emplace_back(remove_null_step);
+            }
             break;
         }
         case substrait::Rel::RelTypeCase::kGenerate:
@@ -909,7 +918,7 @@ QueryPlanPtr SerializedPlanParser::parseOp(const substrait::Rel & rel, std::list
     {
         metrics = {std::make_shared<RelMetric>(String(magic_enum::enum_name(rel.rel_type_case())), metrics, steps)};
     }
-    return query_plan;
+    return std::move(query_plan);
 }
 
 AggregateFunctionPtr getAggregateFunction(const std::string & name, DataTypes arg_types)
