@@ -194,7 +194,7 @@ class CHIteratorApi extends IteratorApi with Logging with LogLevelUtil {
         if (!res) {
           // TODO: support collecting metrics from ch backend
           // val nativeMetrics = resIter.getMetrics.asInstanceOf[NativeMetrics]
-          val nativeMetrics = new NativeMetrics(new java.util.HashMap())
+          val nativeMetrics = new NativeMetrics("")
           nativeMetrics.metrics.put("outputRows", outputRowCount)
           nativeMetrics.metrics.put("outputVectors", outputVectorCount)
           updateNativeMetrics(nativeMetrics)
@@ -253,7 +253,7 @@ class CHIteratorApi extends IteratorApi with Logging with LogLevelUtil {
         if (!res) {
           // TODO: support collecting metrics from ch backend
           // val nativeMetrics = nativeIterator.getMetrics.asInstanceOf[NativeMetrics]
-          val nativeMetrics = new NativeMetrics(new java.util.HashMap())
+          val nativeMetrics = new NativeMetrics("")
           nativeMetrics.metrics.put("outputRows", outputRowCount)
           nativeMetrics.metrics.put("outputVectors", outputVectorCount)
           updateNativeMetrics(nativeMetrics)

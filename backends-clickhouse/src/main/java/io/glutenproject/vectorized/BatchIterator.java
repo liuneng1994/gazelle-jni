@@ -18,6 +18,7 @@
 package io.glutenproject.vectorized;
 
 import io.glutenproject.metrics.IMetrics;
+import io.glutenproject.metrics.NativeMetrics;
 import org.apache.spark.sql.catalyst.expressions.Attribute;
 import org.apache.spark.sql.execution.utils.CHExecUtil;
 import org.apache.spark.sql.vectorized.ColumnVector;

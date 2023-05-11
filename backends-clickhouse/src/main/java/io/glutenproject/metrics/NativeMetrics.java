@@ -20,10 +20,11 @@ import java.util.HashMap;
 
 public class NativeMetrics implements IMetrics {
 
-  public HashMap<String, Long> metrics;
+  public HashMap<String, Long> metrics = new HashMap<>();
+  public String metricsJson;
 
-  public NativeMetrics(HashMap<String, Long> metrics) {
-    this.metrics = metrics;
+  public NativeMetrics(String metricsJson) {
+    this.metricsJson = metricsJson;
   }
 
   /**

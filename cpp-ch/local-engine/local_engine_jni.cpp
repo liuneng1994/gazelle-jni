@@ -64,6 +64,23 @@ static std::string jstring2string(JNIEnv * env, jstring jStr)
     }
 }
 
+static jstring stringTojstring(JNIEnv * env, const char * pat)
+{
+    try
+    {
+        jclass strClass = (env)->FindClass("java/lang/String");
+        jmethodID ctorID = (env)->GetMethodID(strClass, "<init>", "([BLjava/lang/String;)V");
+        jbyteArray bytes = (env)->NewByteArray(strlen(pat));
+        (env)->SetByteArrayRegion(bytes, 0, strlen(pat), reinterpret_cast<const jbyte *>(pat));
+        jstring encoding = (env)->NewStringUTF("UTF-8");
+        return static_cast<jstring>((env)->NewObject(strClass, ctorID, bytes, encoding));
+    }
+    catch (DB::Exception & e)
+    {
+        local_engine::ExceptionUtils::handleException(e);
+    }
+}
+
 extern "C" {
 #endif
 
@@ -79,6 +96,9 @@ static jmethodID spark_row_info_constructor;
 
 static jclass split_result_class;
 static jmethodID split_result_constructor;
+
+static jclass native_metrics_class;
+static jmethodID native_metrics_constructor;
 
 JNIEXPORT jint JNI_OnLoad(JavaVM * vm, void * /*reserved*/)
 {
@@ -138,6 +158,9 @@ JNIEXPORT jint JNI_OnLoad(JavaVM * vm, void * /*reserved*/)
     local_engine::ReservationListenerWrapper::reservation_listener_unreserve
         = local_engine::GetMethodID(env, local_engine::ReservationListenerWrapper::reservation_listener_class, "unreserve", "(J)J");
 
+    native_metrics_class = local_engine::CreateGlobalClassReference(env, "Lio/glutenproject/metrics/NativeMetrics;");
+    native_metrics_constructor = local_engine::GetMethodID(env,native_metrics_class, "<init>", "(Ljava/lang/String;)V");
+
     local_engine::JNIUtils::vm = vm;
     return JNI_VERSION_1_8;
 }
@@ -159,6 +182,7 @@ JNIEXPORT void JNI_OnUnload(JavaVM * vm, void * /*reserved*/)
     env->DeleteGlobalRef(local_engine::SourceFromJavaIter::serialized_record_batch_iterator_class);
     env->DeleteGlobalRef(local_engine::SparkRowToCHColumn::spark_row_interator_class);
     env->DeleteGlobalRef(local_engine::ReservationListenerWrapper::reservation_listener_class);
+    env->DeleteGlobalRef(native_metrics_class);
 }
 
 JNIEXPORT void Java_io_glutenproject_vectorized_ExpressionEvaluatorJniWrapper_nativeInitNative(JNIEnv * env, jobject, jbyteArray conf_plan)
@@ -285,6 +309,16 @@ JNIEXPORT void Java_io_glutenproject_vectorized_BatchIterator_nativeClose(JNIEnv
     LOG_ERROR(&Poco::Logger::get("jni"), "{}",local_engine::RelMetricSerializer::serializeRelMetric(executor->getMetric()));
     delete executor;
     LOCAL_ENGINE_JNI_METHOD_END(env, )
+}
+
+JNIEXPORT jobject Java_io_glutenproject_vectorized_BatchIterator_nativeFetchMetrics(JNIEnv * env, jobject /*obj*/, jlong executor_address)
+{
+    LOCAL_ENGINE_JNI_METHOD_START
+    local_engine::LocalExecutor * executor = reinterpret_cast<local_engine::LocalExecutor *>(executor_address);
+    String metrics_json = local_engine::RelMetricSerializer::serializeRelMetric(executor->getMetric());
+    jobject native_metrics = env->NewObject(native_metrics_class, native_metrics_constructor, stringTojstring(env, metrics_json.c_str()));
+    return native_metrics;
+    LOCAL_ENGINE_JNI_METHOD_END(env,)
 }
 
 JNIEXPORT void
