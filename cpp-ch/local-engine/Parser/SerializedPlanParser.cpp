@@ -1106,7 +1106,7 @@ QueryPlanStepPtr SerializedPlanParser::parseAggregate(QueryPlan & plan, const su
 
     if (has_final_stage)
     {
-        return std::make_unique<MergingAggregatedStep>(
+        auto step = std::make_unique<MergingAggregatedStep>(
             plan.getCurrentDataStream(),
             getMergedAggregateParam(keys, aggregates),
             true,
@@ -1118,6 +1118,8 @@ QueryPlanStepPtr SerializedPlanParser::parseAggregate(QueryPlan & plan, const su
             context->getSettingsRef().aggregation_in_order_max_block_bytes,
             SortDescription(),
             context->getSettingsRef().enable_memory_bound_merging_of_aggregation_results);
+        step->setStepDescription("Merging Aggregate");
+        return step;
     }
     else
     {
@@ -1137,6 +1139,7 @@ QueryPlanStepPtr SerializedPlanParser::parseAggregate(QueryPlan & plan, const su
             false,
             false,
             false);
+        aggregating_step->setStepDescription("Partial Aggregate");
         return std::move(aggregating_step);
     }
 }

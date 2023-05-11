@@ -1,5 +1,6 @@
 #include <Processors/IProcessor.h>
 #include "RelMetric.h"
+#include <Processors/QueryPlan/AggregatingStep.h>
 
 using namespace rapidjson;
 
@@ -47,12 +48,39 @@ size_t RelMetric::getTotalTime() const
 void RelMetric::serialize(Writer<StringBuffer> & writer, bool summary) const
 {
     writer.StartObject();
-    writer.String("id");
+    writer.Key("id");
     writer.Uint(id);
-    writer.String("name");
+    writer.Key("name");
     writer.String(name.c_str());
-    writer.String("time");
+    writer.Key("time");
     writer.Uint(getTotalTime());
+    if (!steps.empty())
+    {
+        writer.Key("steps");
+        writer.StartArray();
+        for (const auto & step : steps)
+        {
+            writer.StartObject();
+            writer.Key("name");
+            writer.String(step->getName().c_str());
+            writer.Key("description");
+            writer.String(step->getStepDescription().c_str());
+            writer.Key("processors");
+            writer.StartArray();
+            for (const auto & processor : step->getProcessors())
+            {
+                writer.StartObject();
+                writer.Key("name");
+                writer.String(processor->getName().c_str());
+                writer.Key("time");
+                writer.Uint(processor->getElapsedUs());
+                writer.EndObject();
+            }
+            writer.EndArray();
+            writer.EndObject();
+        }
+        writer.EndArray();
+    }
     writer.EndObject();
 }
 const String & RelMetric::getName() const
