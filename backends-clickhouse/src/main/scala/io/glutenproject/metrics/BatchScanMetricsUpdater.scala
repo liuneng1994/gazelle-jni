@@ -19,7 +19,13 @@ package io.glutenproject.metrics
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.utils.OASPackageBridge.InputMetricsWrapper
 
-class BatchScanMetricsUpdater(val metrics: Map[String, SQLMetric]) extends MetricsUpdater {
+class BatchScanMetricsUpdater(@transient val metrics: Map[String, SQLMetric])
+  extends MetricsUpdater {
+
+  val scanTime: SQLMetric = metrics("scanTime")
+  val outputRows: SQLMetric = metrics("outputRows")
+  val outputVectors: SQLMetric = metrics("outputVectors")
+  val extraTime: SQLMetric = metrics("extraTime")
 
   override def updateInputMetrics(inputMetrics: InputMetricsWrapper): Unit = {
     // inputMetrics.bridgeIncBytesRead(metrics("inputBytes").value)
@@ -29,17 +35,10 @@ class BatchScanMetricsUpdater(val metrics: Map[String, SQLMetric]) extends Metri
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
     if (opMetrics != null) {
       val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      MetricsUtil.updateOperatorMetrics(
-        metrics,
-        BatchScanMetricsUpdater.METRICS_MAP,
-        operatorMetrics)
+      val metricsData = operatorMetrics.metricsList.get(0)
+      scanTime += (metricsData.time / 1000L).toLong
+      outputRows += metricsData.outputRows
+      outputVectors += metricsData.outputVectors
     }
   }
-}
-
-object BatchScanMetricsUpdater {
-  val METRICS_MAP = Map(
-    "SubstraitFileSource" -> "scanTime",
-    "MergeTreeInOrder" -> "scanTime"
-  )
 }

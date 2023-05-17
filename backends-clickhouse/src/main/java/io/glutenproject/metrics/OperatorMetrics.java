@@ -17,18 +17,26 @@
 
 package io.glutenproject.metrics;
 
-import java.util.Map;
+import io.glutenproject.substrait.AggregationParams;
+import io.glutenproject.substrait.JoinParams;
+import org.apache.commons.collections.CollectionUtils;
+
+import java.util.List;
 
 public class OperatorMetrics implements IOperatorMetrics {
 
-  public Map<String, Long> metric;
-  public int currMetricIdx;
+  public List<MetricsData> metricsList;
+  public JoinParams joinParams;
+  public AggregationParams aggParams;
 
   /**
    * Create an instance for operator metrics.
    */
-  public OperatorMetrics(Map<String, Long> metric, int currMetricIdx) {
-    this.metric = metric;
-    this.currMetricIdx = currMetricIdx;
+  public OperatorMetrics(List<MetricsData> metricsList,
+                         JoinParams joinParams,
+                         AggregationParams aggParams) {
+    this.metricsList = metricsList;
+    this.aggParams = aggParams;
+    this.joinParams = joinParams;
   }
 }

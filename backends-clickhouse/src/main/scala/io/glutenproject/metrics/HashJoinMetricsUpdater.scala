@@ -22,18 +22,89 @@ class HashJoinMetricsUpdater(val metrics: Map[String, SQLMetric]) extends Metric
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
     if (opMetrics != null) {
       val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      MetricsUtil.updateOperatorMetrics(
-        metrics,
-        HashJoinMetricsUpdater.METRICS_MAP,
-        operatorMetrics)
+      val joinParams = operatorMetrics.joinParams
+      var currentIdx = operatorMetrics.metricsList.size() - 1
+      var totalTime = 0L
+
+      // stream side read rel
+      if (joinParams.isStreamedReadRel) {
+        metrics("streamIterReadTime") +=
+          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+        totalTime += operatorMetrics.metricsList.get(currentIdx).time
+        currentIdx -= 1
+      }
+
+      // stream side pre projection
+      if (joinParams.streamPreProjectionNeeded) {
+        metrics("streamPreProjectionTime") +=
+          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+        totalTime += operatorMetrics.metricsList.get(currentIdx).time
+        currentIdx -= 1
+      }
+
+      // build side read rel
+      if (joinParams.isBuildReadRel) {
+        val buildSideRealRel = operatorMetrics.metricsList.get(currentIdx)
+        metrics("buildIterReadTime") += (buildSideRealRel.time / 1000L).toLong
+        metrics("outputRows") += buildSideRealRel.outputRows
+        metrics("outputVectors") += buildSideRealRel.outputVectors
+        totalTime += buildSideRealRel.time
+
+        // update fillingRightJoinSideTime
+        MetricsUtil.getAllProcessorList(buildSideRealRel).foreach(processor => {
+          if (processor.name.equalsIgnoreCase("FillingRightJoinSide")) {
+            metrics("fillingRightJoinSideTime") += (processor.time / 1000L).toLong
+          }
+        })
+
+        currentIdx -= 1
+      }
+
+      // build side pre projection
+      if (joinParams.buildPreProjectionNeeded) {
+        metrics("buildPreProjectionTime") +=
+          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+        totalTime += operatorMetrics.metricsList.get(currentIdx).time
+        currentIdx -= 1
+      }
+
+      // joining
+      val aggMetricsData = operatorMetrics.metricsList.get(currentIdx)
+      metrics("probeTime") += (aggMetricsData.time / 1000L).toLong
+      metrics("outputRows") += aggMetricsData.outputRows
+      metrics("outputVectors") += aggMetricsData.outputVectors
+      totalTime += aggMetricsData.time
+
+      MetricsUtil.getAllProcessorList(aggMetricsData).foreach(processor => {
+        if (!HashJoinMetricsUpdater.INCLUDING_PROCESSORS.contains(processor.name)) {
+          metrics("extraTime") += (processor.time / 1000L).toLong
+        }
+      })
+
+      currentIdx -= 1
+
+      // post project
+      if (joinParams.postProjectionNeeded) {
+        metrics("postProjectTime") +=
+          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+        totalTime += operatorMetrics.metricsList.get(currentIdx).time
+        currentIdx -= 1
+      }
+      metrics("totalTime") += (totalTime / 1000L).toLong
     }
   }
 }
 
 object HashJoinMetricsUpdater {
-  val METRICS_MAP = Map(
-    "JoiningTransform" -> "totalTime",
-    "FillingRightJoinSide" -> "fillingRightJoinSideTime",
-    "FilterTransform" -> "conditionTime"
-  )
+  val INCLUDING_PROCESSORS = Array(
+    "JoiningTransform",
+    "FillingRightJoinSideTransform")
 }

@@ -14,19 +14,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.glutenproject.metrics
+package io.glutenproject.metrics;
 
-import org.apache.spark.sql.execution.metric.SQLMetric
+import java.util.List;
 
-class WindowMetricsUpdater(val metrics: Map[String, SQLMetric]) extends MetricsUpdater {
+public class MetricsStep {
 
-  override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
-    if (opMetrics != null) {
-      val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      val metricsData = operatorMetrics.metricsList.get(0)
-      metrics("totalTime") += (metricsData.time / 1000L).toLong
-      metrics("outputRows") += metricsData.outputRows
-      metrics("outputVectors") += metricsData.outputVectors
-    }
+  protected String name;
+  protected String description;
+  protected List<MetricsProcessor> processors;
+
+  public String getName() {
+    return name;
+  }
+
+  public void setName(String name) {
+    this.name = name;
+  }
+
+  public String getDescription() {
+    return description;
+  }
+
+  public void setDescription(String description) {
+    this.description = description;
+  }
+
+  public List<MetricsProcessor> getProcessors() {
+    return processors;
+  }
+
+  public void setProcessors(List<MetricsProcessor> processors) {
+    this.processors = processors;
   }
 }

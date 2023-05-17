@@ -30,13 +30,6 @@ class FileSourceScanMetricsUpdater(@transient val metrics: Map[String, SQLMetric
   val outputRows: SQLMetric = metrics("outputRows")
   val outputVectors: SQLMetric = metrics("outputVectors")
   val extraTime: SQLMetric = metrics("extraTime")
-  val extraNullSourceTime: SQLMetric = metrics("extraNullSourceTime")
-  val extraExpressionTransformTime: SQLMetric = metrics("extraExpressionTransformTime")
-  val extraSourceFromJavaIterTime: SQLMetric = metrics("extraSourceFromJavaIterTime")
-  val extraConvertingAggregatedToChunksTransformTime: SQLMetric =
-    metrics("extraConvertingAggregatedToChunksTransformTime")
-  val extraConvertingAggregatedToChunksSourceTime: SQLMetric =
-    metrics("extraConvertingAggregatedToChunksSourceTime")
 
   override def updateInputMetrics(inputMetrics: InputMetricsWrapper): Unit = {
     // inputMetrics.bridgeIncBytesRead(metrics("inputBytes").value)
@@ -46,39 +39,10 @@ class FileSourceScanMetricsUpdater(@transient val metrics: Map[String, SQLMetric
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
     if (opMetrics != null) {
       val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      scanTime +=
-        (operatorMetrics.metric
-          .getOrDefault("SubstraitFileSource_0_elapsed", 0L) / 1000L).toLong
-      scanTime +=
-        (operatorMetrics.metric
-          .getOrDefault("MergeTreeInOrder_0_elapsed", 0L) / 1000L).toLong
-      outputRows += operatorMetrics.metric.getOrDefault("outputRows", 0L)
-      outputVectors += operatorMetrics.metric.getOrDefault("outputVectors", 0L)
-      extraTime +=
-        (operatorMetrics.metric
-          .getOrDefault("extra_elapsed", 0L) / 1000L).toLong
-      extraNullSourceTime +=
-        (operatorMetrics.metric
-          .getOrDefault("NullSource_elapsed", 0L) / 1000L).toLong
-      extraExpressionTransformTime +=
-        (operatorMetrics.metric
-          .getOrDefault("ExpressionTransform_elapsed", 0L) / 1000L).toLong
-      extraSourceFromJavaIterTime +=
-        (operatorMetrics.metric
-          .getOrDefault("SourceFromJavaIter_elapsed", 0L) / 1000L).toLong
-      extraConvertingAggregatedToChunksTransformTime +=
-        (operatorMetrics.metric
-          .getOrDefault("ConvertingAggregatedToChunksTransform_elapsed", 0L) / 1000L).toLong
-      extraConvertingAggregatedToChunksSourceTime +=
-        (operatorMetrics.metric
-          .getOrDefault("ConvertingAggregatedToChunksSource_elapsed", 0L) / 1000L).toLong
+      val metricsData = operatorMetrics.metricsList.get(0)
+      scanTime += (metricsData.time / 1000L).toLong
+      outputRows += metricsData.outputRows
+      outputVectors += metricsData.outputVectors
     }
   }
-}
-
-object FileSourceScanMetricsUpdater {
-  val METRICS_MAP = Map(
-    "SubstraitFileSource" -> "scanTime",
-    "MergeTreeInOrder" -> "scanTime"
-  )
 }

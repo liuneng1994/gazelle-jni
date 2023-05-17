@@ -306,7 +306,7 @@ JNIEXPORT void Java_io_glutenproject_vectorized_BatchIterator_nativeClose(JNIEnv
 {
     LOCAL_ENGINE_JNI_METHOD_START
     local_engine::LocalExecutor * executor = reinterpret_cast<local_engine::LocalExecutor *>(executor_address);
-    LOG_ERROR(&Poco::Logger::get("jni"), "{}",local_engine::RelMetricSerializer::serializeRelMetric(executor->getMetric()));
+    LOG_DEBUG(&Poco::Logger::get("jni"), "{}",local_engine::RelMetricSerializer::serializeRelMetric(executor->getMetric()));
     delete executor;
     LOCAL_ENGINE_JNI_METHOD_END(env, )
 }

@@ -16,23 +16,55 @@
  */
 package io.glutenproject.metrics;
 
-import java.util.HashMap;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.collections.CollectionUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class NativeMetrics implements IMetrics {
 
-  public HashMap<String, Long> metrics = new HashMap<>();
+  private static final Logger LOG = LoggerFactory.getLogger(NativeMetrics.class);
+
+  public List<MetricsData> metricsDataList;
   public String metricsJson;
 
   public NativeMetrics(String metricsJson) {
     this.metricsJson = metricsJson;
+    // LOG.error("Get metrics json string: " + this.metricsJson);
+    this.metricsDataList = NativeMetrics.deserializeMetricsJson(this.metricsJson);
+    // LOG.error("Get metrics json: " + this.metricsDataList.size());
+  }
+
+  public void setFinalOutputMetrics(long outputRowCount, long outputVectorCount) {
+    if (CollectionUtils.isNotEmpty(this.metricsDataList)) {
+      this.metricsDataList.get(this.metricsDataList.size() - 1).outputVectors = outputVectorCount;
+      this.metricsDataList.get(this.metricsDataList.size() - 1).outputRows = outputRowCount;
+    }
   }
 
   /**
-   * TODO: Get the operator metrics by the operator name
-   * @param operatorName
-   * @return
+   * Deserialize metrics json string to MetricsData
    */
-  public OperatorMetrics getOperatorMetric(String operatorName, int currMetricIdx) {
-    return new OperatorMetrics(this.metrics, currMetricIdx);
+  public static List<MetricsData> deserializeMetricsJson(String metricsJson) {
+    if (metricsJson != null && !metricsJson.isEmpty()) {
+      ObjectMapper mapper = new ObjectMapper();
+      try {
+        List<MetricsData> metricsDataList =
+            mapper.readValue(
+                metricsJson,
+                new TypeReference<List<MetricsData>>() { });
+        Collections.sort(metricsDataList, (a, b) -> Long.compare(a.id, b.id));
+        return metricsDataList;
+      } catch (Exception e) {
+        LOG.error("Deserialize metrics json string error:", e);
+        return new ArrayList<MetricsData>();
+      }
+    }
+    return new ArrayList<MetricsData>();
   }
 }
