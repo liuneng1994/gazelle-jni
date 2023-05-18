@@ -16,69 +16,81 @@
  */
 package io.glutenproject.metrics
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.metric.SQLMetric
 
-class HashAggregateMetricsUpdater(val metrics: Map[String, SQLMetric]) extends MetricsUpdater {
+class HashAggregateMetricsUpdater(val metrics: Map[String, SQLMetric])
+  extends MetricsUpdater
+  with Logging {
 
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
-    if (opMetrics != null) {
-      val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      val aggregationParams = operatorMetrics.aggParams
-      var currentIdx = operatorMetrics.metricsList.size() - 1
-      var totalTime = 0L
+    try {
+      if (opMetrics != null) {
+        val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
+        if (!operatorMetrics.metricsList.isEmpty) {
+          val aggregationParams = operatorMetrics.aggParams
+          var currentIdx = operatorMetrics.metricsList.size() - 1
+          var totalTime = 0L
 
-      // read rel
-      if (aggregationParams.isReadRel) {
-        metrics("iterReadTime") +=
-          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
-        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
-        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
-        totalTime += operatorMetrics.metricsList.get(currentIdx).time
-        currentIdx -= 1
-      }
+          // read rel
+          if (aggregationParams.isReadRel) {
+            metrics("iterReadTime") +=
+              (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+            metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+            metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+            totalTime += operatorMetrics.metricsList.get(currentIdx).time
+            currentIdx -= 1
+          }
 
-      // pre projection
-      if (aggregationParams.preProjectionNeeded) {
-        metrics("preProjectTime") +=
-          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
-        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
-        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
-        totalTime += operatorMetrics.metricsList.get(currentIdx).time
-        currentIdx -= 1
-      }
+          // pre projection
+          if (aggregationParams.preProjectionNeeded) {
+            metrics("preProjectTime") +=
+              (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+            metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+            metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+            totalTime += operatorMetrics.metricsList.get(currentIdx).time
+            currentIdx -= 1
+          }
 
-      // aggregating
-      val aggMetricsData = operatorMetrics.metricsList.get(currentIdx)
-      metrics("aggregatingTime") += (aggMetricsData.time / 1000L).toLong
-      metrics("outputRows") += aggMetricsData.outputRows
-      metrics("outputVectors") += aggMetricsData.outputVectors
-      totalTime += aggMetricsData.time
+          // aggregating
+          val aggMetricsData = operatorMetrics.metricsList.get(currentIdx)
+          metrics("aggregatingTime") += (aggMetricsData.time / 1000L).toLong
+          metrics("outputRows") += aggMetricsData.outputRows
+          metrics("outputVectors") += aggMetricsData.outputVectors
+          totalTime += aggMetricsData.time
 
-      MetricsUtil.getAllProcessorList(aggMetricsData).foreach(processor => {
-        if (!HashAggregateMetricsUpdater.INCLUDING_PROCESSORS.contains(processor.name)) {
-          metrics("extraTime") += (processor.time / 1000L).toLong
+          MetricsUtil
+            .getAllProcessorList(aggMetricsData)
+            .foreach(
+              processor => {
+                if (!HashAggregateMetricsUpdater.INCLUDING_PROCESSORS.contains(processor.name)) {
+                  metrics("extraTime") += (processor.time / 1000L).toLong
+                }
+              })
+
+          currentIdx -= 1
+
+          // post projection
+          if (aggregationParams.postProjectionNeeded) {
+            metrics("postProjectTime") +=
+              (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
+            metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
+            metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
+            totalTime += operatorMetrics.metricsList.get(currentIdx).time
+            currentIdx -= 1
+          }
+          metrics("totalTime") += (totalTime / 1000L).toLong
         }
-      })
-
-      currentIdx -= 1
-
-      // post projection
-      if (aggregationParams.postProjectionNeeded) {
-        metrics("postProjectTime") +=
-          (operatorMetrics.metricsList.get(currentIdx).time / 1000L).toLong
-        metrics("outputRows") += operatorMetrics.metricsList.get(currentIdx).outputRows
-        metrics("outputVectors") += operatorMetrics.metricsList.get(currentIdx).outputVectors
-        totalTime += operatorMetrics.metricsList.get(currentIdx).time
-        currentIdx -= 1
       }
-      metrics("totalTime") += (totalTime / 1000L).toLong
+    } catch {
+      case e: Throwable =>
+        logError(
+          s"HashAggregateMetricsUpdater Updating native metrics failed due to ${e.getCause}.")
     }
   }
 }
 
 object HashAggregateMetricsUpdater {
 
-  val INCLUDING_PROCESSORS = Array(
-    "AggregatingTransform",
-    "MergingAggregatedTransform")
+  val INCLUDING_PROCESSORS = Array("AggregatingTransform", "MergingAggregatedTransform")
 }

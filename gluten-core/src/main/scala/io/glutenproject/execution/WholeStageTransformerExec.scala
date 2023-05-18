@@ -276,6 +276,7 @@ case class WholeStageTransformerExec(child: SparkPlan)(val transformStageId: Int
         substraitPlanLogLevel,
         s"Generating the Substrait plan took: ${(System.nanoTime() - startTime)} ns.")
 
+      // logError(s"---------- operatorMap : ${wsCxt.substraitContext.operatorToPlanName}")
       new GlutenWholeStageColumnarRDD(
         sparkContext,
         substraitPlanPartitions,
@@ -307,6 +308,7 @@ case class WholeStageTransformerExec(child: SparkPlan)(val transformStageId: Int
         substraitPlanLogLevel,
         s"Generating the Substrait plan took: ${(System.nanoTime() - startTime)} ns.")
 
+      // logError(s"---------- operatorMap : ${resCtx.substraitContext.operatorToPlanName}")
       new WholeStageZippedPartitionsRDD(
         sparkContext,
         genFinalNewRDDsForBroadcast(inputRDDs),

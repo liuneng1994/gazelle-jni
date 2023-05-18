@@ -18,6 +18,7 @@ package io.glutenproject.metrics
 
 import io.glutenproject.execution._
 import io.glutenproject.substrait.{AggregationParams, JoinParams}
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.SparkPlan
 
@@ -46,7 +47,8 @@ object MetricsUtil extends Logging {
     def treeifyMetricsUpdaters(plan: SparkPlan): MetricsUpdaterTree = {
       plan match {
         case j: HashJoinLikeExecTransformer =>
-          MetricsUpdaterTree(j.metricsUpdater(),
+          MetricsUpdaterTree(
+            j.metricsUpdater(),
             Seq(treeifyMetricsUpdaters(j.streamedPlan), treeifyMetricsUpdaters(j.buildPlan)))
         case t: TransformSupport =>
           MetricsUpdaterTree(t.metricsUpdater(), t.children.map(treeifyMetricsUpdaters))
@@ -69,64 +71,65 @@ object MetricsUtil extends Logging {
    * A recursive function updating the metrics of one transformer and its child.
    *
    * @param mut
-   * the metrics updater tree built from the original plan
+   *   the metrics updater tree built from the original plan
    * @param relMap
-   * the map between operator index and its rels
+   *   the map between operator index and its rels
    * @param operatorIdx
-   * the index of operator
+   *   the index of operator
    * @param metrics
-   * the metrics fetched from native
+   *   the metrics fetched from native
    * @param metricsIdx
-   * the index of metrics
+   *   the index of metrics
    * @param joinParamsMap
-   * the map between operator index and join parameters
+   *   the map between operator index and join parameters
    * @param aggParamsMap
-   * the map between operator index and aggregation parameters
+   *   the map between operator index and aggregation parameters
    */
   def updateTransformerMetrics(
-    mutNode: MetricsUpdaterTree,
-    relMap: java.util.HashMap[java.lang.Long, java.util.ArrayList[java.lang.Long]],
-    operatorIdx: java.lang.Long,
-    joinParamsMap: java.util.HashMap[java.lang.Long, JoinParams],
-    aggParamsMap: java.util.HashMap[java.lang.Long, AggregationParams])
-  : IMetrics => Unit = { imetrics =>
-    try {
-      val metrics = imetrics.asInstanceOf[NativeMetrics]
-      val numNativeMetrics = metrics.metricsDataList.size()
-      if (numNativeMetrics == 0) {
-        ()
-      } else if (mutNode.updater.isInstanceOf[NoopMetricsUpdater]) {
-        ()
-      } else {
-        updateTransformerMetricsInternal(
-          mutNode,
-          relMap,
-          operatorIdx,
-          metrics,
-          numNativeMetrics - 1,
-          joinParamsMap,
-          aggParamsMap)
+      mutNode: MetricsUpdaterTree,
+      relMap: java.util.HashMap[java.lang.Long, java.util.ArrayList[java.lang.Long]],
+      operatorIdx: java.lang.Long,
+      joinParamsMap: java.util.HashMap[java.lang.Long, JoinParams],
+      aggParamsMap: java.util.HashMap[java.lang.Long, AggregationParams]): IMetrics => Unit = {
+    imetrics =>
+      try {
+        val metrics = imetrics.asInstanceOf[NativeMetrics]
+        val numNativeMetrics = metrics.metricsDataList.size()
+        if (numNativeMetrics == 0) {
+          ()
+        } else if (mutNode.updater.isInstanceOf[NoopMetricsUpdater]) {
+          ()
+        } else {
+          updateTransformerMetricsInternal(
+            mutNode,
+            relMap,
+            operatorIdx,
+            metrics,
+            numNativeMetrics - 1,
+            joinParamsMap,
+            aggParamsMap)
+        }
+      } catch {
+        case e: Throwable =>
+          logWarning(s"Updating native metrics failed due to ${e.getCause}.")
+          ()
       }
-    } catch {
-      case e: Throwable =>
-        logWarning(s"Updating native metrics failed due to ${e.getCause}.")
-        ()
-    }
   }
 
   /**
    * @return
-   * operator index and metrics index
+   *   operator index and metrics index
    */
   def updateTransformerMetricsInternal(
-    mutNode: MetricsUpdaterTree,
-    relMap: java.util.HashMap[java.lang.Long, java.util.ArrayList[java.lang.Long]],
-    operatorIdx: java.lang.Long,
-    metrics: NativeMetrics,
-    metricsIdx: Int,
-    joinParamsMap: java.util.HashMap[java.lang.Long, JoinParams],
-    aggParamsMap: java.util.HashMap[java.lang.Long, AggregationParams]): (java.lang.Long, Int) = {
+      mutNode: MetricsUpdaterTree,
+      relMap: java.util.HashMap[java.lang.Long, java.util.ArrayList[java.lang.Long]],
+      operatorIdx: java.lang.Long,
+      metrics: NativeMetrics,
+      metricsIdx: Int,
+      joinParamsMap: java.util.HashMap[java.lang.Long, JoinParams],
+      aggParamsMap: java.util.HashMap[java.lang.Long, AggregationParams]): (java.lang.Long, Int) = {
     val nodeMetricsList = new java.util.ArrayList[MetricsData]()
+    // println(s"-------$operatorIdx-----------$metricsIdx")
     var curMetricsIdx = metricsIdx
     relMap
       .get(operatorIdx)
@@ -135,6 +138,7 @@ object MetricsUtil extends Logging {
           nodeMetricsList.add(metrics.metricsDataList.get(curMetricsIdx))
           curMetricsIdx -= 1
         })
+    // println(s"-------$operatorIdx-----------$curMetricsIdx")
 
     val operatorMetrics = new OperatorMetrics(
       nodeMetricsList,
@@ -144,26 +148,28 @@ object MetricsUtil extends Logging {
 
     var newOperatorIdx: java.lang.Long = operatorIdx - 1
 
-    mutNode.children.foreach { child =>
-      if (!child.updater.isInstanceOf[NoopMetricsUpdater]) {
-        val result = updateTransformerMetricsInternal(
-          child,
-          relMap,
-          newOperatorIdx,
-          metrics,
-          curMetricsIdx,
-          joinParamsMap,
-          aggParamsMap)
-        newOperatorIdx = result._1
-        curMetricsIdx = result._2
-      }
+    mutNode.children.foreach {
+      child =>
+        if (!child.updater.isInstanceOf[NoopMetricsUpdater]) {
+          val result = updateTransformerMetricsInternal(
+            child,
+            relMap,
+            newOperatorIdx,
+            metrics,
+            curMetricsIdx,
+            joinParamsMap,
+            aggParamsMap)
+          newOperatorIdx = result._1
+          curMetricsIdx = result._2
+        }
     }
     (newOperatorIdx, curMetricsIdx)
   }
 
   def getAllProcessorList(metricData: MetricsData): Seq[MetricsProcessor] = {
-    metricData.steps.asScala.flatMap(step => {
-      step.processors.asScala
-    })
+    metricData.steps.asScala.flatMap(
+      step => {
+        step.processors.asScala
+      })
   }
 }

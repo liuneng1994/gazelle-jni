@@ -59,6 +59,10 @@ class GlutenClickHouseTPCDSParquetAQESuite
         }
       })
 
+  test(s"TPCDS q95") {
+    runTPCDSQuery("q95") { df => }
+  }
+
   test("test 'select count(*)'") {
     val df = spark.sql("""
                          |select count(c_customer_sk) from customer

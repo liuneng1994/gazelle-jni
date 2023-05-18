@@ -37,7 +37,6 @@ public class NativeMetrics implements IMetrics {
     this.metricsJson = metricsJson;
     // LOG.error("Get metrics json string: " + this.metricsJson);
     this.metricsDataList = NativeMetrics.deserializeMetricsJson(this.metricsJson);
-    // LOG.error("Get metrics json: " + this.metricsDataList.size());
   }
 
   public void setFinalOutputMetrics(long outputRowCount, long outputVectorCount) {

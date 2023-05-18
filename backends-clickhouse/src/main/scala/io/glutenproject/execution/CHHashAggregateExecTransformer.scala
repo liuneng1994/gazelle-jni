@@ -81,7 +81,7 @@ case class CHHashAggregateExecTransformer(
     }
 
     val aggParams = new AggregationParams
-    val operatorId = context.nextOperatorId
+    val operatorId = context.nextOperatorId(this.nodeName)
 
     val (relNode, inputAttributes, outputAttributes) = if (childCtx != null) {
       // The final HashAggregateExecTransformer and partial HashAggregateExecTransformer

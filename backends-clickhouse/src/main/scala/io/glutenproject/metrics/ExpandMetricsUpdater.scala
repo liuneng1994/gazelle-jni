@@ -23,10 +23,12 @@ class ExpandMetricsUpdater(val metrics: Map[String, SQLMetric]) extends MetricsU
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
     if (opMetrics != null) {
       val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      val metricsData = operatorMetrics.metricsList.get(0)
-      metrics("totalTime") += (metricsData.time / 1000L).toLong
-      metrics("outputRows") += metricsData.outputRows
-      metrics("outputVectors") += metricsData.outputVectors
+      if (!operatorMetrics.metricsList.isEmpty) {
+        val metricsData = operatorMetrics.metricsList.get(0)
+        metrics("totalTime") += (metricsData.time / 1000L).toLong
+        metrics("outputRows") += metricsData.outputRows
+        metrics("outputVectors") += metricsData.outputVectors
+      }
     }
   }
 }

@@ -39,10 +39,12 @@ class FileSourceScanMetricsUpdater(@transient val metrics: Map[String, SQLMetric
   override def updateNativeMetrics(opMetrics: IOperatorMetrics): Unit = {
     if (opMetrics != null) {
       val operatorMetrics = opMetrics.asInstanceOf[OperatorMetrics]
-      val metricsData = operatorMetrics.metricsList.get(0)
-      scanTime += (metricsData.time / 1000L).toLong
-      outputRows += metricsData.outputRows
-      outputVectors += metricsData.outputVectors
+      if (!operatorMetrics.metricsList.isEmpty) {
+        val metricsData = operatorMetrics.metricsList.get(0)
+        scanTime += (metricsData.time / 1000L).toLong
+        outputRows += metricsData.outputRows
+        outputVectors += metricsData.outputVectors
+      }
     }
   }
 }

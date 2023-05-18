@@ -72,6 +72,9 @@ class SubstraitContext extends Serializable {
   private val operatorToRelsMap = new java.util.HashMap[
     java.lang.Long, java.util.ArrayList[java.lang.Long]]()
 
+  val operatorToPlanName = new java.util.HashMap[
+    java.lang.Long, java.lang.String]()
+
   // A map stores the relationship between join operator id and its param.
   private val joinParamsMap = new java.util.HashMap[java.lang.Long, JoinParams]()
 
@@ -227,8 +230,9 @@ class SubstraitContext extends Serializable {
   def registeredAggregationParams: java.util.HashMap[java.lang.Long, AggregationParams] =
     this.aggregationParamsMap
 
-  def nextOperatorId: java.lang.Long = {
+  def nextOperatorId(planName: String): java.lang.Long = {
     val id = this.operatorId
+    operatorToPlanName.put(id, planName)
     this.operatorId += 1
     id
   }

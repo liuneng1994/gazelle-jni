@@ -34,7 +34,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       relMap: util.HashMap[lang.Long, util.ArrayList[lang.Long]],
       joinParamsMap: util.HashMap[lang.Long, JoinParams],
       aggParamsMap: util.HashMap[lang.Long, AggregationParams]): IMetrics => Unit = {
-    logError(s"---------- relMap : ${relMap.toString}")
+    // logError(s"---------- relMap : ${relMap.toString}")
     MetricsUtil.updateNativeMetrics(child, relMap, joinParamsMap, aggParamsMap)
   }
 
