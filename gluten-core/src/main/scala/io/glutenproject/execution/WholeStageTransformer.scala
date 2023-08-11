@@ -190,6 +190,7 @@ case class WholeStageTransformer(child: SparkPlan, materializeInput: Boolean = f
 
     if (log.isDebugEnabled()) {
       planJson = SubstraitPlanPrinterUtil.substraitPlanToJson(planNode.toProtobuf)
+      // logWarning(s"plan json : $planJson")
     }
 
     WholeStageTransformContext(planNode, substraitContext)
