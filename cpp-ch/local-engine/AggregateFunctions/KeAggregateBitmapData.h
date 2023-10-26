@@ -67,25 +67,22 @@ struct bitmap_buffer
 template <typename T>
 class KeRoaringBitmapData : private boost::noncopyable
 {
-private:
+public:
     using RoaringBitmap = std::conditional_t<sizeof(T) >= 8, roaring::Roaring64Map, roaring::Roaring>;
     using Value = UInt64;
-    std::shared_ptr<RoaringBitmap> roaring_bitmap;
+    RoaringBitmap roaring_bitmap;
 
-public:
     static std::atomic<UInt64> read_time;
     static std::atomic<UInt64> read_buff_time;
     static std::atomic<UInt64> or_time;
     static std::atomic<UInt64> write_time;
     static std::atomic<UInt64> write_buff_time;
 
-    void init() { roaring_bitmap = std::make_shared<RoaringBitmap>(); }
+    void add(T value) { roaring_bitmap.add(static_cast<Value>(value)); }
 
-    void add(T value) { roaring_bitmap->add(static_cast<Value>(value)); }
+    UInt64 size() const { return roaring_bitmap.cardinality(); }
 
-    UInt64 size() const { return roaring_bitmap->cardinality(); }
-
-    void merge(const KeRoaringBitmapData & r1) { *roaring_bitmap |= *r1.roaring_bitmap; }
+    void merge(const KeRoaringBitmapData & r1) { roaring_bitmap |= r1.roaring_bitmap; }
 
     void read(DB::ReadBuffer & in)
     {
@@ -93,6 +90,7 @@ public:
         time.start();
         size_t size;
         readVarUInt(size, in);
+        static thread_local String buf;
 
         static constexpr size_t max_size = 100_GiB;
 
@@ -101,156 +99,58 @@ public:
         if (size > max_size)
             throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Too large array size in groupBitmap (maximum: {})", max_size);
 
-        /// TODO: this is unnecessary copying - it will be better to read and deserialize in one pass.
-        std::unique_ptr<char[]> buf(new char[size]);
-        in.readStrict(buf.get(), size);
-        auto t = time.elapsedNanoseconds();
-        read_buff_time += t;
-
-        roaring_bitmap = std::make_shared<RoaringBitmap>(RoaringBitmap::readSafe(buf.get(), size));
-        // roaring_bitmap->setCopyOnWrite(true);
-        // roaring_bitmap->runOptimize();
-        read_time += (time.elapsedNanoseconds() - t);
-        time.stop();
-    }
-
-    void read_with_add(DB::ReadBuffer & in)
-    {
-        Stopwatch sw;
-        sw.start();
-        size_t size;
-        readVarUInt(size, in);
-
-        static constexpr size_t max_size = 100_GiB;
-
-        if (size == 0)
-            throw Exception(ErrorCodes::INCORRECT_DATA, "Incorrect size (0) in groupBitmap.");
-        if (size > max_size)
-            throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Too large array size in groupBitmap (maximum: {})", max_size);
-
-        /// TODO: this is unnecessary copying - it will be better to read and deserialize in one pass.
-        std::unique_ptr<char[]> buf(new char[size]);
-        in.readStrict(buf.get(), size);
-        auto t = sw.elapsedNanoseconds();
-        read_buff_time += t;
-
-        // roaring_bitmap = std::make_shared<RoaringBitmap>(RoaringBitmap::readSafe(buf.get(), size));
-        srand(static_cast<unsigned int>(time(nullptr)));
-        UInt64 randomValue = rand() % 1000000;
-        roaring_bitmap = std::make_shared<RoaringBitmap>();
-        roaring_bitmap->add(randomValue);
-        // roaring_bitmap->runOptimize();
-        read_time += (sw.elapsedNanoseconds() - t);
-        sw.stop();
-    }
-
-    void read_with_create(DB::ReadBuffer & in)
-    {
-        Stopwatch time;
-        time.start();
-        size_t size;
-        readVarUInt(size, in);
-
-        static constexpr size_t max_size = 100_GiB;
-
-        if (size == 0)
-            throw Exception(ErrorCodes::INCORRECT_DATA, "Incorrect size (0) in groupBitmap.");
-        if (size > max_size)
-            throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Too large array size in groupBitmap (maximum: {})", max_size);
-
-        /// TODO: this is unnecessary copying - it will be better to read and deserialize in one pass.
-        std::unique_ptr<char[]> buf(new char[size]);
-        in.readStrict(buf.get(), size);
-        auto t = time.elapsedNanoseconds();
-        read_buff_time += t;
-
-        auto bitmap_tmp = std::make_unique<RoaringBitmap>(RoaringBitmap::readSafe(buf.get(), size));
-        roaring_bitmap = std::make_shared<RoaringBitmap>();
-
-        for (auto it = bitmap_tmp->begin(); it != bitmap_tmp->end(); ++it)
+        if (in.available() > size)
         {
-            // reverse high 4 bytes to Little-endian
-            Int64 original_value = *it;
-            UInt32 high_bytes = uint32_t(original_value >> 32);
-            UInt32 high_bytes_new
-                = ((high_bytes >> 24)) | ((high_bytes >> 8) & 0xFF00) | ((high_bytes << 8) & 0xFF0000) | ((high_bytes << 24));
-            UInt64 value = (uint64_t(high_bytes_new) << 32) | uint64_t(uint32_t(original_value));
-            roaring_bitmap->add(value);
+            RoaringBitmap::readSafe(in.position(), size);
+            in.ignore(size);
+            read_time += (time.elapsedNanoseconds());
         }
-
-        // roaring_bitmap->runOptimize();
-        read_time += (time.elapsedNanoseconds() - t);
-        time.stop();
-    }
-
-    void read_with_buffer(DB::ReadBuffer & in, std::shared_ptr<bitmap_buffer> bitmap_buff)
-    {
-        Stopwatch time;
-        time.start();
-        size_t size;
-        readVarUInt(size, in);
-
-        static constexpr size_t max_size = 100_GiB;
-
-        if (size == 0)
-            throw Exception(ErrorCodes::INCORRECT_DATA, "Incorrect size (0) in groupBitmap.");
-        if (size > max_size)
-            throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Too large array size in groupBitmap (maximum: {})", max_size);
-
-        if (size > bitmap_buff->bitmap_char_buff_len)
+        else
         {
-            bitmap_buff->bitmap_char_buff.reset(new char[size]);
-            bitmap_buff->bitmap_char_buff_len = size;
+            buf.reserve(size);
+            in.readStrict(buf.data(), size);
+            auto t = time.elapsedNanoseconds();
+            read_buff_time += t;
+
+            roaring_bitmap = RoaringBitmap::readSafe(buf.data(), size);
+            read_time += (time.elapsedNanoseconds() - t);
+
         }
-        in.readStrict(bitmap_buff->bitmap_char_buff.get(), size);
-        auto t = time.elapsedNanoseconds();
-        read_buff_time += t;
-        roaring_bitmap = std::make_shared<RoaringBitmap>(RoaringBitmap::readSafe(bitmap_buff->bitmap_char_buff.get(), size));
-        // roaring_bitmap->runOptimize();
-        read_time += (time.elapsedNanoseconds() - t);
+        // roaring_bitmap.setCopyOnWrite(true);
+        // roaring_bitmap.runOptimize();
         time.stop();
     }
+
 
     void write(DB::WriteBuffer & out) const
     {
         Stopwatch time;
         time.start();
-        auto size = roaring_bitmap->getSizeInBytes();
+        auto size = roaring_bitmap.getSizeInBytes();
         writeVarUInt(size, out);
-        std::unique_ptr<char[]> buf(new char[size]);
-        roaring_bitmap->write(buf.get());
-        auto t = time.elapsedNanoseconds();
-        write_buff_time += t;
-        out.write(buf.get(), size);
-        write_time += (time.elapsedNanoseconds() - t);
-        time.stop();
-    }
-
-    void write_with_buffer(DB::WriteBuffer & out, std::shared_ptr<bitmap_buffer> bitmap_buff) const
-    {
-        Stopwatch time;
-        time.start();
-        auto size = roaring_bitmap->getSizeInBytes();
-        writeVarUInt(size, out);
-        if (size > bitmap_buff->bitmap_char_buff_len)
+        if (out.available() > size)
         {
-            bitmap_buff->bitmap_char_buff.reset(new char[size]);
-            bitmap_buff->bitmap_char_buff_len = size;
+            roaring_bitmap.write(out.position());
+            out.position() += size;
+            write_time += (time.elapsedNanoseconds());
         }
-        roaring_bitmap->write(bitmap_buff->bitmap_char_buff.get());
-        auto t = time.elapsedNanoseconds();
-        write_buff_time += t;
-        out.write(bitmap_buff->bitmap_char_buff.get(), size);
-        write_time += (time.elapsedNanoseconds() - t);
-        time.stop();
+        else
+        {
+            std::unique_ptr<char[]> buf(new char[size]);
+            roaring_bitmap.write(buf.get());
+            auto t = time.elapsedNanoseconds();
+            write_buff_time += t;
+            out.write(buf.get(), size);
+            write_time += (time.elapsedNanoseconds() - t);
+        }
     }
 
     void to_ke_bitmap_data(DB::WriteBuffer & ke_bitmap_data_buffer) const
     {
-        auto size = roaring_bitmap->getSizeInBytes();
+        auto size = roaring_bitmap.getSizeInBytes();
 
         std::unique_ptr<char[]> buf(new char[size]);
-        roaring_bitmap->write(buf.get());
+        roaring_bitmap.write(buf.get());
 
         Int8 signedLongs = 0;
         writeBinary(signedLongs, ke_bitmap_data_buffer);
@@ -366,7 +266,7 @@ public:
      */
     UInt8 rb_is_subset(const KeRoaringBitmapData & r1) const /// NOLINT
     {
-        if (!r1.roaring_bitmap->isSubset(*roaring_bitmap))
+        if (!r1.roaring_bitmap.isSubset(*roaring_bitmap))
             return 0;
         return 1;
     }
@@ -384,7 +284,7 @@ public:
             = ((high_bytes >> 24)) | ((high_bytes >> 8) & 0xFF00) | ((high_bytes << 8) & 0xFF0000) | ((high_bytes << 24));
         UInt64 value = (uint64_t(high_bytes_new) << 32) | uint64_t(uint32_t(x));
 
-        return roaring_bitmap->contains(value);
+        return roaring_bitmap.contains(value);
     }
 
     /**
@@ -394,7 +294,7 @@ public:
     UInt64 rb_to_array(PaddedPODArray<Element> & res) const /// NOLINT
     {
         UInt64 count = 0;
-        for (auto it = roaring_bitmap->begin(); it != roaring_bitmap->end(); ++it)
+        for (auto it = roaring_bitmap.begin(); it != roaring_bitmap.end(); ++it)
         {
             // reverse high 4 bytes to Little-endian
             Int64 original_value = *it;
@@ -418,7 +318,7 @@ public:
         if (range_start >= range_end)
             return count;
 
-        for (auto it = roaring_bitmap->begin(); it != roaring_bitmap->end(); ++it)
+        for (auto it = roaring_bitmap.begin(); it != roaring_bitmap.end(); ++it)
         {
             if (*it < range_start)
                 continue;
@@ -444,7 +344,7 @@ public:
             return 0;
 
         UInt64 count = 0;
-        for (auto it = roaring_bitmap->begin(); it != roaring_bitmap->end(); ++it)
+        for (auto it = roaring_bitmap.begin(); it != roaring_bitmap.end(); ++it)
         {
             if (*it < range_start)
                 continue;
@@ -467,23 +367,23 @@ public:
 
         UInt64 count = 0;
         UInt64 offset_count = 0;
-        auto it = roaring_bitmap->begin();
-        for (; it != roaring_bitmap->end() && offset_count < offset; ++it)
+        auto it = roaring_bitmap.begin();
+        for (; it != roaring_bitmap.end() && offset_count < offset; ++it)
             ++offset_count;
 
-        for (; it != roaring_bitmap->end() && count < limit; ++it, ++count)
+        for (; it != roaring_bitmap.end() && count < limit; ++it, ++count)
             r1.add(*it);
         return count;
     }
 
     UInt64 rb_min() const /// NOLINT
     {
-        return roaring_bitmap->minimum();
+        return roaring_bitmap.minimum();
     }
 
     UInt64 rb_max() const /// NOLINT
     {
-        return roaring_bitmap->maximum();
+        return roaring_bitmap.maximum();
     }
 
     /**
@@ -496,9 +396,9 @@ public:
         {
             if (from_vals[i] == to_vals[i])
                 continue;
-            bool changed = roaring_bitmap->removeChecked(static_cast<Value>(from_vals[i]));
+            bool changed = roaring_bitmap.removeChecked(static_cast<Value>(from_vals[i]));
             if (changed)
-                roaring_bitmap->add(static_cast<Value>(to_vals[i]));
+                roaring_bitmap.add(static_cast<Value>(to_vals[i]));
         }
     }
 };
