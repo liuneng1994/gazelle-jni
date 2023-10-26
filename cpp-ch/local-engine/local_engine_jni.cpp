@@ -235,7 +235,6 @@ Java_org_apache_spark_sql_udaf_RoaringBitmapJniTest_testCRoaringBitmap(JNIEnv * 
     for (int i = 0; i < size; i++)
     {
         bitmap_array[i] = std::make_unique<local_engine::KeRoaringBitmapData<Int64>>();
-        bitmap_array[i]->init();
         // UInt64 s = i * 100;
         UInt64 s = 0;
         UInt64 e = (i + 1) * 100;
@@ -249,7 +248,6 @@ Java_org_apache_spark_sql_udaf_RoaringBitmapJniTest_testCRoaringBitmap(JNIEnv * 
     }
 
     auto result = std::make_unique<local_engine::KeRoaringBitmapData<Int64>>();
-    result->init();
     UInt64 or_time = 0;
     Stopwatch time;
     time.start();
