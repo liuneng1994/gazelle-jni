@@ -101,7 +101,7 @@ public:
 
         if (in.available() > size)
         {
-            RoaringBitmap::readSafe(in.position(), size);
+            roaring_bitmap = RoaringBitmap::readSafe(in.position(), size);
             in.ignore(size);
             read_time += (time.elapsedNanoseconds());
         }
