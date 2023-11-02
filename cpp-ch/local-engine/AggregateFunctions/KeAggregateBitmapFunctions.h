@@ -108,8 +108,8 @@ public:
 
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *) const override
     {
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         Data & data_lhs = this->data(place);
         auto bitmap_data = assert_cast<const ColumnString &>(*columns[0]).getDataAt(row_num);
         if (!bitmap_data.empty())
@@ -118,13 +118,13 @@ public:
             auto charBuff = std::make_unique<ReadBufferFromJavaBitmap>(const_cast<char *>(bitmap_data.data), bitmap_data.size);
             // data_rhs->roaring_bitmap.read_with_buffer(*charBuff, bitmap_buff);
             data_rhs.read(*charBuff);
-            auto t = time.elapsedNanoseconds();
-            add_time += t;
+//            auto t = time.elapsedNanoseconds();
+//            add_time += t;
             data_lhs.merge(data_rhs);
-            merge_time1 += (time.elapsedNanoseconds() - t);
-            merge_count1 += 1;
+//            merge_time1 += (time.elapsedNanoseconds() - t);
+//            merge_count1 += 1;
         }
-        time.stop();
+//        time.stop();
     }
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
@@ -132,34 +132,34 @@ public:
         Data & data_lhs = this->data(place);
         const Data & data_rhs = this->data(rhs);
 
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         data_lhs.merge(data_rhs);
-        merge_time += time.elapsedNanoseconds();
-        merge_count += 1;
-        time.stop();
+//        merge_time += time.elapsedNanoseconds();
+//        merge_count += 1;
+//        time.stop();
     }
 
     bool isVersioned() const override { return false; }
 
     void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
     {
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         // this->data(place).roaring_bitmap.write_with_buffer(buf, bitmap_buff);
         this->data(place).write(buf);
-        ser_time += time.elapsedNanoseconds();
-        time.stop();
+//        ser_time += time.elapsedNanoseconds();
+//        time.stop();
     }
 
     void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version */, Arena *) const override
     {
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         // this->data(place).roaring_bitmap.read_with_buffer(buf, bitmap_buff);
         this->data(place).read(buf);
-        de_time += time.elapsedNanoseconds();
-        time.stop();
+//        de_time += time.elapsedNanoseconds();
+//        time.stop();
     }
 
     void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena *) const override

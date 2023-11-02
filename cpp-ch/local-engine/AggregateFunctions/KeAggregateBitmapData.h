@@ -86,62 +86,62 @@ public:
 
     void read(DB::ReadBuffer & in)
     {
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         size_t size;
         readVarUInt(size, in);
         static thread_local String buf;
 
         static constexpr size_t max_size = 100_GiB;
 
-        if (size == 0)
+        if unlikely(size == 0)
             throw Exception(ErrorCodes::INCORRECT_DATA, "Incorrect size (0) in groupBitmap.");
-        if (size > max_size)
+        if unlikely(size > max_size)
             throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Too large array size in groupBitmap (maximum: {})", max_size);
 
         if (in.available() > size)
         {
             roaring_bitmap = RoaringBitmap::readSafe(in.position(), size);
             in.ignore(size);
-            read_time += (time.elapsedNanoseconds());
+//            read_time += (time.elapsedNanoseconds());
         }
         else
         {
             buf.reserve(size);
             in.readStrict(buf.data(), size);
-            auto t = time.elapsedNanoseconds();
-            read_buff_time += t;
+//            auto t = time.elapsedNanoseconds();
+//            read_buff_time += t;
 
             roaring_bitmap = RoaringBitmap::readSafe(buf.data(), size);
-            read_time += (time.elapsedNanoseconds() - t);
+//            read_time += (time.elapsedNanoseconds() - t);
 
         }
         // roaring_bitmap.setCopyOnWrite(true);
         // roaring_bitmap.runOptimize();
-        time.stop();
+//        time.stop();
     }
 
 
     void write(DB::WriteBuffer & out) const
     {
-        Stopwatch time;
-        time.start();
+//        Stopwatch time;
+//        time.start();
         auto size = roaring_bitmap.getSizeInBytes();
         writeVarUInt(size, out);
         if (out.available() > size)
         {
             roaring_bitmap.write(out.position());
             out.position() += size;
-            write_time += (time.elapsedNanoseconds());
+//            write_time += (time.elapsedNanoseconds());
         }
         else
         {
             std::unique_ptr<char[]> buf(new char[size]);
             roaring_bitmap.write(buf.get());
-            auto t = time.elapsedNanoseconds();
-            write_buff_time += t;
+//            auto t = time.elapsedNanoseconds();
+//            write_buff_time += t;
             out.write(buf.get(), size);
-            write_time += (time.elapsedNanoseconds() - t);
+//            write_time += (time.elapsedNanoseconds() - t);
         }
     }
 
