@@ -145,7 +145,7 @@ class CHSparkPlanExecApi extends SparkPlanExecApi with Logging {
         // For the transform phase, the FileSourceScanExec is already transformed
         CHFilterExecTransformer(condition, child)
       case _ =>
-        FilterExecTransformer(condition, child)
+        CHFilterExecTransformer(condition, child)
     }
   }
 
